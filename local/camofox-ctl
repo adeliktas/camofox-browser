@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# camofox-ctl - control the persistent camofox-browser REST server.
+#
+# The server (node server.js) owns the ONE Camoufox browser; the MCP proxy that
+# agents spawn is stateless and never launches a browser. So: one server, one
+# window, tabs and cookies survive agent reloads and reboots of the agent.
+#
+# Usage: camofox-ctl {start|stop|restart|status|ensure|logs|url|open}
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$HERE/.." && pwd)
+. "$HERE/camofox.env"
+
+HOST=${CAMOFOX_BIND_HOST:-127.0.0.1}
+PORT=${CAMOFOX_PORT:-9377}
+STATE=${CAMOFOX_STATE_DIR:-$HOME/.local/share/camofox-browser}
+PIDFILE=$STATE/server.pid
+LOGFILE=$STATE/server.log
+mkdir -p "$STATE"
+
+url() { echo "http://$HOST:$PORT"; }
+pid() { [ -f "$PIDFILE" ] && cat "$PIDFILE" 2>/dev/null || true; }
+running() { local p; p=$(pid); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+healthy() { curl -fsS -m 3 "$(url)/health" >/dev/null 2>&1; }
+
+# Servers started by hand or by a previous ctl run, tracked by pidfile or not.
+servers() {
+	local p
+	for p in $(pgrep -u "$(id -u)" -f "node .*${REPO}/server.js" 2>/dev/null); do
+		echo "$p"
+	done
+	return 0
+}
+
+start() {
+	local p
+	if healthy; then
+		if ! running; then
+			p=$(servers | head -1)
+			[ -n "$p" ] && echo "$p" >"$PIDFILE"
+			echo "already running: pid ${p:-?} $(url)"
+		else
+			echo "already running: pid $(pid) $(url)"
+		fi
+		return 0
+	fi
+	# A dead port with a stale pidfile: forget the pid and start fresh.
+	rm -f "$PIDFILE"
+	nohup node "$REPO/server.js" >>"$LOGFILE" 2>&1 &
+	echo $! >"$PIDFILE"
+	for _ in $(seq 60); do
+		healthy && { echo "started: pid $(pid) $(url)"; return 0; }
+		sleep 0.5
+	done
+	echo "error: server did not answer $(url)/health - see $LOGFILE" >&2
+	tail -5 "$LOGFILE" >&2
+	return 1
+}
+
+stop() {
+	local p
+	p=$(pid)
+	# SIGTERM -> gracefulShutdown -> closeBrowserFully, so no stray window is left.
+	if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+		kill "$p" 2>/dev/null || true
+		for _ in $(seq 40); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
+		kill -0 "$p" 2>/dev/null && {
+			echo "warning: pid $p ignored SIGTERM, SIGKILL (browser window may survive)" >&2
+			kill -9 "$p" 2>/dev/null || true
+		}
+	fi
+	rm -f "$PIDFILE"
+	for p in $(servers); do kill "$p" 2>/dev/null || true; done
+	echo "stopped"
+}
+
+status() {
+	if healthy && running; then
+		echo "running: pid $(pid) $(url)"
+		echo "health: $(curl -fsS -m 3 "$(url)/health")"
+		echo "log: $LOGFILE"
+	else
+		echo "stopped ($HOST:$PORT closed)"
+		return 1
+	fi
+}
+
+case "${1:-}" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	status) status ;;
+	ensure) running && healthy && echo "running: pid $(pid) $(url)" || start ;;
+	logs) tail -n "${2:-50}" "$LOGFILE" ;;
+	url) url ;;
+	open) xdg-open "$(url)" ;;
+	*) echo "usage: $0 {start|stop|restart|status|ensure|logs|url|open}" >&2; exit 2 ;;
+esac

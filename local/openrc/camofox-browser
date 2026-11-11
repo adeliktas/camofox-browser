@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# OpenRC service for the camofox-browser REST server (run as the desktop user so
+# the Camoufox window lands on that user's display; needs XDG_RUNTIME_DIR/DISPLAY
+# only for a visible window - headless works without them).
+description="camofox-browser: persistent Camoufox for MCP clients"
+
+: "${CAMOFOX_USER:=adeliktas}"
+: "${REPO:=$HOME/gitrepos/securityrepos/camofox-browser}"
+ENVFILE="$REPO/local/camofox.env"
+
+command="node"
+command_args="$REPO/server.js"
+command_background="yes"
+command_user="$CAMOFOX_USER"
+pidfile="$HOME/.local/share/camofox-browser/server.pid"
+output_log="$HOME/.local/share/camofox-browser/openrc.log"
+error_log="$HOME/.local/share/camofox-browser/openrc.err"
+
+depend() { need localmount; use net; }
+
+start_pre() {
+	[ -r "$ENVFILE" ] || { eerror "missing $ENVFILE"; return 1; }
+	# shellcheck disable=SC1090
+	set -a; . "$ENVFILE"; set +a
+	mkdir -p "$CAMOFOX_STATE_DIR"
+	export DISPLAY="${DISPLAY:-:0}"
+	checkpath --directory --owner "$CAMOFOX_USER" "$CAMOFOX_STATE_DIR"
+}

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=camofox-browser daemon
+Comment=Persistent Camoufox browser for MCP clients
+Exec=/home/adeliktas/gitrepos/securityrepos/camofox-browser/local/camofox-ctl ensure
+Terminal=false
+X-GNOME-Autostart-enabled=true
+Categories=Development;
