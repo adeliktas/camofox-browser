@@ -23,6 +23,7 @@ url() { echo "http://$HOST:$PORT"; }
 pid() { [ -f "$PIDFILE" ] && cat "$PIDFILE" 2>/dev/null || true; }
 running() { local p; p=$(pid); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
 healthy() { curl -fsS -m 3 "$(url)/health" >/dev/null 2>&1; }
+port_open() { timeout 2 bash -c "exec 3<>/dev/tcp/$HOST/$PORT" 2>/dev/null; }
 
 # Servers started by hand or by a previous ctl run, tracked by pidfile or not.
 servers() {
@@ -44,6 +45,12 @@ start() {
 			echo "already running: pid $(pid) $(url)"
 		fi
 		return 0
+	fi
+	# Port taken by something that is not ours: never race it, one browser per port.
+	if port_open; then
+		echo "error: $HOST:$PORT is open but is not a healthy camofox-browser." >&2
+		echo "       refusing to start a second server. Check: ss -tlnp | grep $PORT" >&2
+		return 1
 	fi
 	# A dead port with a stale pidfile: forget the pid and start fresh.
 	rm -f "$PIDFILE"

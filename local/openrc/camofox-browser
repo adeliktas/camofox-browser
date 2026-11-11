@@ -4,25 +4,36 @@
 # only for a visible window - headless works without them).
 description="camofox-browser: persistent Camoufox for MCP clients"
 
+# start_pre runs as root, where $HOME is /root - derive every path from the
+# service user's passwd entry instead.
 : "${CAMOFOX_USER:=adeliktas}"
-: "${REPO:=$HOME/gitrepos/securityrepos/camofox-browser}"
+USER_HOME=$(getent passwd "$CAMOFOX_USER" | cut -d: -f6)
+[ -n "$USER_HOME" ] || { eerror "unknown user $CAMOFOX_USER"; exit 1; }
+: "${REPO:=$USER_HOME/gitrepos/securityrepos/camofox-browser}"
 ENVFILE="$REPO/local/camofox.env"
+STATE_DIR="$USER_HOME/.local/share/camofox-browser"
 
 command="node"
 command_args="$REPO/server.js"
 command_background="yes"
 command_user="$CAMOFOX_USER"
-pidfile="$HOME/.local/share/camofox-browser/server.pid"
-output_log="$HOME/.local/share/camofox-browser/openrc.log"
-error_log="$HOME/.local/share/camofox-browser/openrc.err"
+pidfile="$STATE_DIR/server.pid"
+output_log="$STATE_DIR/openrc.log"
+error_log="$STATE_DIR/openrc.err"
 
 depend() { need localmount; use net; }
 
 start_pre() {
 	[ -r "$ENVFILE" ] || { eerror "missing $ENVFILE"; return 1; }
+	[ -r "$REPO/server.js" ] || { eerror "missing $REPO/server.js"; return 1; }
 	# shellcheck disable=SC1090
 	set -a; . "$ENVFILE"; set +a
-	mkdir -p "$CAMOFOX_STATE_DIR"
-	export DISPLAY="${DISPLAY:-:0}"
-	checkpath --directory --owner "$CAMOFOX_USER" "$CAMOFOX_STATE_DIR"
+	# No X at boot: camofox falls back to headless on its own, which is what a
+	# service should do. The desktop session uses local/autostart instead.
+	checkpath --directory --owner "$CAMOFOX_USER" "$STATE_DIR"
+}
+
+stop_post() {
+	# server.js closes the browser on SIGTERM; nothing else to clean up.
+	return 0
 }

@@ -9,14 +9,22 @@ Old repo stays at `~/gitrepos/securityrepos/camoufox-mcp` — do not delete it.
 
 ## 0. Status (2026-11-11)
 
-Done: npm ci + shared browser on 8788 · `local/` (env, ctl, selfcheck, importer, autostart, OpenRC file) ·
+Done: npm ci + shared browser on 8788 · `local/` (env, ctl, selfcheck, importer, autostart, OpenRC unit) ·
 cookies migrated (168 cookies imported, verified live) · `mcp.json` switched to the stdio proxy
 (`camoufox` = camofox 31 tools, `camoufox-python` = disabled rollback entry) · XDG autostart replaced ·
-selfcheck green twice.
+**headed window** (`CAMOFOX_INTERACTIVE=desktop`) with the hand-close-relaunch path verified ·
+selfcheck green twice, 14 checks each (headed window, hand-close, SIGKILL relaunch, telemetry read from
+the running server's `/proc/<pid>/environ`, exactly one server, foreign-port guard, idempotent `ensure`).
 
-Remaining, needs the user: install the OpenRC service (`sudo cp local/openrc/camofox-browser /etc/init.d/ &&
-sudo rc-update add camofox-browser default`) — not done, no passwordless sudo. Additions live under
-`local/`, see `local/README.md`.
+Remaining, needs the user's password: install the OpenRC service
+(`sudo cp local/openrc/camofox-browser /etc/init.d/ && sudo rc-update add camofox-browser default`) —
+the unit itself is tested: with `HOME=/root` it still resolves `REPO`/`ENVFILE`/`pidfile` from
+`getent passwd` for the service user, and its exact launch line (`set -a; . local/camofox.env;
+node server.js`) was run on a spare port and answered `/health`. Use **either** the OpenRC unit **or**
+the desktop autostart, not both — two servers would fight for the port (`ensure`/guard refuse).
+
+Code additions all live under `local/` (`local/README.md`); this migration record is the only new file
+at the repo root, on purpose so it survives upstream merges without touching their tree.
 
 ## 1. What we ran before (matched or beaten)
 
@@ -158,7 +166,8 @@ fallback for a month). Do not touch `~/.cache/camoufox` (both stacks can share i
 ## 6. Acceptance criteria
 
 1. `local/camofox-ctl ensure` is idempotent: second call prints "already running", no second browser.
-2. A new agent session reaches `camofox_*` tools without any manual step after a reboot.
+2. A new agent session reaches `camofox_*` tools without any manual step after a reboot, and the
+   browser is a **visible window** you can watch and close by hand.
 3. Closing the browser window by hand does not break the next tool call.
 4. `ensure` survives: no PID file yet port open (adopts), stale PID file (restarts).
 5. `local/selfcheck.mjs` green, and green again after `camofox-ctl restart`.
@@ -182,6 +191,10 @@ never touched.
 - **No streamable-HTTP MCP** → agent config becomes a stdio `command`, and the proxy needs the checkout
   on disk (`npm link` or absolute path). If the fork moves, update `mcp.json`.
 - **Port**: 8788 vs upstream default 9377 — set `CAMOFOX_PORT` everywhere (ctl, env, mcp.json env).
+- **Headed needs a session bus/X**: `CAMOFOX_INTERACTIVE=desktop` + `DISPLAY`; without X camofox silently
+  falls back to headless, and the selfcheck then fails the window assertions on purpose.
+- **OpenRC at boot has no DISPLAY**, so a boot-time service comes up headless; the visible window comes
+  from the desktop autostart. That is the one behavioural difference left between the two entry points.
 - **Node >= 22** (we have v26.3.0). Browser binary can be shared with `~/.cache/camoufox`.
 - **Feature gaps**: no dialog handler, no form-fill, no console/network capture. If a real task hits one,
   add a thin plugin (upstream has a plugin system) instead of forking `server.js`.

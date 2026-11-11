@@ -140,11 +140,19 @@ const main = async () => {
   const h = await fetch(`${BASE}/health`).then((r) => r.json()).catch(() => null);
   if (!h?.ok) return fail(`no healthy server at ${BASE}`);
   ok(`health ok (tabs=${h.activeTabs}, browserConnected=${h.browserConnected})`);
-  if (process.env.CAMOFOX_CRASH_REPORT_ENABLED !== 'false') {
-    fail('CAMOFOX_CRASH_REPORT_ENABLED is not false (upstream telemetry defaults on)');
-  } else ok('telemetry disabled');
-  if (process.env.CAMOFOX_BIND_HOST !== '127.0.0.1') fail(`bound to ${process.env.CAMOFOX_BIND_HOST}, not loopback`);
-  else ok('loopback bind');
+  // Judge the server that is actually running, not this script's own env.
+  const serverPids = allPids().map(proc).filter((p) => p && /camofox-browser\/server\.js/.test(p.cmd));
+  if (serverPids.length !== 1) {
+    fail(`expected exactly 1 camofox server, found ${serverPids.length}`);
+  } else {
+    const env = readFileSync(`/proc/${serverPids[0].pid}/environ`, 'utf8').split('\0');
+    if (!env.includes('CAMOFOX_CRASH_REPORT_ENABLED=false')) {
+      fail('running server does not have CAMOFOX_CRASH_REPORT_ENABLED=false (upstream telemetry on)');
+    } else ok('telemetry disabled (server process env)');
+    if (!env.includes(`CAMOFOX_PORT=${PORT}`)) fail(`server process is not on port ${PORT}`);
+    if (!env.includes('CAMOFOX_BIND_HOST=127.0.0.1')) fail('server process is not bound to loopback');
+    else ok(`loopback bind, port ${PORT} (server process env)`);
+  }
 
   const a = mcpClient('a');
   await a.init();
@@ -192,7 +200,46 @@ const main = async () => {
     else ok('browser relaunched after being killed');
   }
 
-  // Failure mode 2: a second server must not start on the same port/profile.
+  // Failure mode 2 (parity with the old stack): a human closes the window.
+  const winIds = () => {
+    const out = spawnSync('wmctrl', ['-l'], { encoding: 'utf8' }).stdout;
+    return out.split('\n').map((l) => l.trim()).filter((l) => /Camoufox$/.test(l))
+      .map((l) => ({ id: l.split(/\s+/)[0], title: l.replace(/^\S+\s+\S+\s+\S+\s+/, '') }));
+  };
+  if (process.env.CAMOFOX_INTERACTIVE !== 'desktop') {
+    console.log(`skip headed window + hand-close checks (CAMOFOX_INTERACTIVE=${process.env.CAMOFOX_INTERACTIVE || 'unset'})`);
+  } else {
+    await callRetrying(b, 'camofox_create_tab', { url: 'https://example.com' }).catch(() => null);
+    const before = winIds();
+    if (!before.length) {
+      fail('no Camoufox window on screen (headed parity not delivered)');
+    } else {
+      ok(`headed window present: "${before[0].title}"`);
+      const oldIds = new Set(before.map((w) => w.id));
+      for (const w of before) spawnSync('wmctrl', ['-i', '-c', w.id]);
+      let gone = false;
+      for (let i = 0; i < 20 && !gone; i++) {
+        await sleep(500);
+        gone = winIds().every((w) => !oldIds.has(w.id));
+      }
+      if (!gone) fail('window did not close when asked (wmctrl)');
+      else {
+        ok('window closed by hand (old window id gone)');
+        const after = await callRetrying(b, 'camofox_create_tab', { url: 'https://example.com' })
+          .catch((e) => `BROKEN ${e.message}`);
+        if (String(after).startsWith('BROKEN')) {
+          fail(`browser did not come back after the window was closed: ${String(after).slice(0, 160)}`);
+        } else {
+          const now = winIds();
+          if (!now.length) fail('browser answered but no window came back (not headed any more)');
+          else if (now.every((w) => oldIds.has(w.id))) fail('old window still there, browser never relaunched');
+          else ok('browser relaunched with a new window after the hand-close');
+        }
+      }
+    }
+  }
+
+  // Failure mode 3: a second server must not start on the same port/profile.
   const ctl = spawnSync(join(REPO, 'local/camofox-ctl'), ['ensure'], { encoding: 'utf8' });
   const ctlOut = `${ctl.stdout}${ctl.stderr}`.trim();
   if (/started:/.test(ctlOut)) fail(`ctl ensure started a second server: ${ctlOut}`);
