@@ -26,11 +26,15 @@ it, so a normal restart/logout brings the visible window back:
 `selfcheck.mjs` adapts to whichever mode is running, so "must print PASS" holds in both.
 
 Remaining, needs the user's password: install the OpenRC service
-(`sudo cp local/openrc/camofox-browser /etc/init.d/ && sudo rc-update add camofox-browser default`) —
-the unit itself is tested: with `HOME=/root` it still resolves `REPO`/`ENVFILE`/`pidfile` from
-`getent passwd` for the service user, and its exact launch line (`set -a; . local/camofox.env;
-node server.js`) was run on a spare port and answered `/health`. Use **either** the OpenRC unit **or**
-the desktop autostart, not both — two servers would fight for the port (`ensure`/guard refuse).
+(`sudo cp local/openrc/camofox-browser /etc/init.d/ && sudo rc-update add camofox-browser default`).
+The unit is tested end to end by `local/test-openrc-env.sh`, which reproduces the root start
+(`HOME=/root`), and asserts what a service must actually deliver, not merely `/health`:
+`start_pre` exports `HOME=$USER_HOME` before sourcing the env file (otherwise
+`CAMOFOX_PROFILE_DIR/COOKIES_DIR/STATE_DIR` resolve to `/root/...` and the service silently loses the
+migrated cookies with EACCES), the browser comes up (`browserConnected:true`), the persisted session
+state is restored (`restoring persisted storage state`), a migrated cookie is readable in the page, and
+the log contains no `/root/` paths. Use **either** the OpenRC unit **or** the desktop autostart, not
+both — two servers would fight for the port (`ensure`/guard refuse).
 
 Code additions all live under `local/` (`local/README.md`); this migration record is the only new file
 at the repo root, on purpose so it survives upstream merges without touching their tree.
@@ -74,17 +78,19 @@ Custom commits to preserve in spirit (`5ff3716..3c3d92f`):
 What is **not** there and has to be written by us: ctl script, env file, OpenRC service, autostart
 entry, selfcheck, and the migration of profile + `mcp.json`.
 
-## 3. Target layout (all our additions, upstream-merge friendly)
+## 3. Target layout
 
-Keep our files in paths upstream does not touch, so `git merge upstream/master` stays clean:
+Every code addition lives under `local/`, a path upstream does not touch, so `git merge upstream/master`
+stays clean. The single deliberate root-level file is this migration record.
 
 ```
 local/camofox.env                     # our env (sourced by ctl + service + selfcheck)
 local/camofox-ctl                     # start|stop|restart|status|ensure|logs|url|open
 local/selfcheck.mjs                   # ported from scripts/selfcheck.py, talks to REST+MCP
 local/autostart/camofox-browser.desktop
-local/openrc/camofox-browser          # OpenRC init script (user-installable variant below)
-local/README.md                       # 10 lines: what this fork adds, how to deploy/rollback
+local/openrc/camofox-browser          # OpenRC init script
+local/test-openrc-env.sh              # proves the unit's root start path resolves the user's paths
+local/README.md                       # what this fork adds, how to deploy/rollback
 ```
 
 ## 4. Env contract (`local/camofox.env`)
@@ -181,8 +187,9 @@ fallback for a month). Do not touch `~/.cache/camoufox` (both stacks can share i
 4. `ensure` survives: no PID file yet port open (adopts), stale PID file (restarts).
 5. `local/selfcheck.mjs` green, and green again after `camofox-ctl restart`.
 6. Telemetry off, bind loopback, nothing listens on 0.0.0.0.
-7. `git -C ~/gitrepos/securityrepos/camofox-browser status` clean; all our files under `local/`;
-   `git fetch upstream && git log --oneline upstream/master ^HEAD` short (merges stay possible).
+7. `git -C ~/gitrepos/securityrepos/camofox-browser status` clean; every code addition under `local/`
+   (only this migration record sits at the root); `git fetch upstream && git log --oneline upstream/master ^HEAD`
+   empty (merges stay possible).
 
 ## 7. Rollback (one line, any time before 5.8)
 
@@ -208,3 +215,5 @@ never touched.
 - **Feature gaps**: no dialog handler, no form-fill, no console/network capture. If a real task hits one,
   add a thin plugin (upstream has a plugin system) instead of forking `server.js`.
 - **OpenRC needs root**; without it the XDG autostart + `ensure` path already covers "always up after login".
+- **OpenRC starts as root**: anything in the unit that touches user paths must go through `getent passwd`
+  *and* `HOME=$USER_HOME` before sourcing `local/camofox.env`, or the service runs on `/root` paths.

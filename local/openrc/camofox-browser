@@ -26,6 +26,11 @@ depend() { need localmount; use net; }
 start_pre() {
 	[ -r "$ENVFILE" ] || { eerror "missing $ENVFILE"; return 1; }
 	[ -r "$REPO/server.js" ] || { eerror "missing $REPO/server.js"; return 1; }
+	# We run as root here, but the env file derives CAMOFOX_PROFILE_DIR,
+	# CAMOFOX_COOKIES_DIR and CAMOFOX_STATE_DIR from $HOME: point HOME at the
+	# service user first, otherwise the service silently runs on /root paths
+	# (EACCES on the profile, cookie jar never imported).
+	export HOME="$USER_HOME"
 	# shellcheck disable=SC1090
 	set -a; . "$ENVFILE"; set +a
 	# No X at boot: camofox falls back to headless on its own, which is what a
