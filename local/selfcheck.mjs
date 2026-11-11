@@ -142,16 +142,20 @@ const main = async () => {
   ok(`health ok (tabs=${h.activeTabs}, browserConnected=${h.browserConnected})`);
   // Judge the server that is actually running, not this script's own env.
   const serverPids = allPids().map(proc).filter((p) => p && /camofox-browser\/server\.js/.test(p.cmd));
+  let runtimeMode = 'off';
   if (serverPids.length !== 1) {
     fail(`expected exactly 1 camofox server, found ${serverPids.length}`);
   } else {
     const env = readFileSync(`/proc/${serverPids[0].pid}/environ`, 'utf8').split('\0');
-    if (!env.includes('CAMOFOX_CRASH_REPORT_ENABLED=false')) {
+    const has = (k, v) => env.includes(`${k}=${v}`);
+    if (!has('CAMOFOX_CRASH_REPORT_ENABLED', 'false')) {
       fail('running server does not have CAMOFOX_CRASH_REPORT_ENABLED=false (upstream telemetry on)');
     } else ok('telemetry disabled (server process env)');
-    if (!env.includes(`CAMOFOX_PORT=${PORT}`)) fail(`server process is not on port ${PORT}`);
-    if (!env.includes('CAMOFOX_BIND_HOST=127.0.0.1')) fail('server process is not bound to loopback');
+    if (!has('CAMOFOX_PORT', String(PORT))) fail(`server process is not on port ${PORT}`);
+    if (!has('CAMOFOX_BIND_HOST', '127.0.0.1')) fail('server process is not bound to loopback');
     else ok(`loopback bind, port ${PORT} (server process env)`);
+    runtimeMode = (env.find((e) => e.startsWith('CAMOFOX_INTERACTIVE=')) || '=off').split('=')[1];
+    ok(`browser mode of the running server: ${runtimeMode}`);
   }
 
   const a = mcpClient('a');
@@ -206,8 +210,8 @@ const main = async () => {
     return out.split('\n').map((l) => l.trim()).filter((l) => /Camoufox$/.test(l))
       .map((l) => ({ id: l.split(/\s+/)[0], title: l.replace(/^\S+\s+\S+\s+\S+\s+/, '') }));
   };
-  if (process.env.CAMOFOX_INTERACTIVE !== 'desktop') {
-    console.log(`skip headed window + hand-close checks (CAMOFOX_INTERACTIVE=${process.env.CAMOFOX_INTERACTIVE || 'unset'})`);
+  if (runtimeMode !== 'desktop') {
+    console.log(`skip headed window + hand-close checks (running server is ${runtimeMode}, not desktop)`);
   } else {
     await callRetrying(b, 'camofox_create_tab', { url: 'https://example.com' }).catch(() => null);
     const before = winIds();

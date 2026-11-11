@@ -13,8 +13,17 @@ Done: npm ci + shared browser on 8788 · `local/` (env, ctl, selfcheck, importer
 cookies migrated (168 cookies imported, verified live) · `mcp.json` switched to the stdio proxy
 (`camoufox` = camofox 31 tools, `camoufox-python` = disabled rollback entry) · XDG autostart replaced ·
 **headed window** (`CAMOFOX_INTERACTIVE=desktop`) with the hand-close-relaunch path verified ·
-selfcheck green twice, 14 checks each (headed window, hand-close, SIGKILL relaunch, telemetry read from
-the running server's `/proc/<pid>/environ`, exactly one server, foreign-port guard, idempotent `ensure`).
+selfcheck green twice in each mode: headed = window present, closed by hand (`wmctrl`), new window back
+after the relaunch; headless = same suite, one `skip headed window + hand-close checks` line. Every other
+assertion is mode-independent (SIGKILL relaunch, shared browser seen by a second client, telemetry/port/
+bind read from the running server's `/proc/<pid>/environ`, exactly one server, foreign-port guard,
+idempotent `ensure`).
+
+**Delivered runtime right now: headless** (`interactiveMode:"off"`, no window) because the user asked for
+no GUI during the migration. `local/camofox.env` still defaults to `desktop`, and the XDG autostart uses
+it, so a normal restart/logout brings the visible window back:
+`local/camofox-ctl restart` (or keep it off with `CAMOFOX_INTERACTIVE=off local/camofox-ctl restart`).
+`selfcheck.mjs` adapts to whichever mode is running, so "must print PASS" holds in both.
 
 Remaining, needs the user's password: install the OpenRC service
 (`sudo cp local/openrc/camofox-browser /etc/init.d/ && sudo rc-update add camofox-browser default`) —
